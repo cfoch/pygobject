@@ -978,16 +978,17 @@ pygobject_init_wrapper_get(void)
 }
 
 int
-pygobject_constructv(PyGObject  *self,
-                     guint       n_parameters,
-                     GParameter *parameters)
+pygobject_constructv(PyGObject      *self,
+                     guint           n_props,
+                     const gchar    *prop_names[],
+                     const GValue    values[])
 {
     GObject *obj;
 
     g_assert (self->obj == NULL);
     pygobject_init_wrapper_set((PyObject *) self);
-    obj = g_object_newv(pyg_type_from_object((PyObject *) self),
-                        n_parameters, parameters);
+    obj = g_object_new_with_properties(pyg_type_from_object((PyObject *) self),
+                        n_props, prop_names, values);
 
     if (g_object_is_floating (obj))
         self->private_flags.flags |= PYGOBJECT_GOBJECT_WAS_FLOATING;
@@ -1345,8 +1346,9 @@ pyg_object_new (PyGObject *self, PyObject *args, PyObject *kwargs)
     GType type;
     GObject *obj = NULL;
     GObjectClass *class;
-    guint n_params = 0, i;
-    GParameter *params = NULL;
+    guint n_props = 0, i;
+    const gchar **prop_names = NULL;
+    GValue *values = NULL;
 
     if (!PyArg_ParseTuple (args, "O:gobject.new", &pytype)) {
 	return NULL;
@@ -1367,19 +1369,19 @@ pyg_object_new (PyGObject *self, PyObject *args, PyObject *kwargs)
 	return NULL;
     }
 
-    if (!pygobject_prepare_construct_properties (class, kwargs, &n_params, &params))
+    if (!pygobject_prepare_construct_properties (class, kwargs, &n_props, &prop_names, &values))
         goto cleanup;
 
-    obj = g_object_newv(type, n_params, params);
+    obj = g_object_new_with_properties(type, n_props, prop_names, values);
     if (!obj)
 	PyErr_SetString (PyExc_RuntimeError, "could not create object");
 
  cleanup:
-    for (i = 0; i < n_params; i++) {
-	g_free((gchar *) params[i].name);
-	g_value_unset(&params[i].value);
+    for (i = 0; i < n_props; i++) {
+	g_value_unset(&values[i]);
     }
-    g_free(params);
+    g_free (values);
+    g_free (prop_names);
     g_type_class_unref(class);
 
     if (obj) {

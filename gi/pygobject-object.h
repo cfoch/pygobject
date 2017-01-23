@@ -35,8 +35,9 @@ pyg_object_peek_inst_data(GObject *obj)
 
 gboolean      pygobject_prepare_construct_properties  (GObjectClass *class,
                                                        PyObject *kwargs,
-                                                       guint *n_params,
-                                                       GParameter **params);
+                                                       guint *n_props,
+                                                       const gchar ***prop_names,
+                                                       GValue **values);
 void          pygobject_register_class   (PyObject *dict,
                                           const gchar *type_name,
                                           GType gtype, PyTypeObject *type,
