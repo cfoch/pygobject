@@ -348,3 +348,13 @@ def strip_boolean_result(method, exc_type=None, exc_str=None, fail_ret=None):
                 raise exc_type(exc_str or 'call failed')
             return fail_ret
     return wrapped
+
+
+def vfunc(gtype):
+    def dec(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            return func(self, *args, **kwargs)
+        wrapper._gtype = gtype
+        return wrapper
+    return dec

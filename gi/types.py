@@ -82,16 +82,10 @@ class MetaClassHelper(object):
             if not vfunc_name.startswith("do_") or not callable(py_vfunc):
                 continue
 
-            # If a method name starts with "do_" assume it is a vfunc, and search
-            # in the base classes for a method with the same name to override.
-            # Recursion is necessary as overriden methods in most immediate parent
-            # classes may shadow vfuncs from classes higher in the hierarchy.
-            vfunc_info = None
-            for base in cls.__mro__:
-                method = getattr(base, vfunc_name, None)
-                if method is not None and isinstance(method, VFuncInfo):
-                    vfunc_info = method
-                    break
+            if hasattr(py_vfunc, "_gtype"):
+                vfunc_info = find_vfunc_info_in_bases(cls, vfunc_name, py_vfunc._gtype)
+            else:
+                vfunc_info = find_vfunc_info_in_bases(cls, vfunc_name)
 
             # If we did not find a matching method name in the bases, we might
             # be overriding an interface virtual method. Since interfaces do not
@@ -100,27 +94,35 @@ class MetaClassHelper(object):
             # InterfaceInfo.get_vfuncs(). Note that the infos returned by
             # get_vfuncs() use the C vfunc name (ie. there is no "do_" prefix).
             if vfunc_info is None:
-                vfunc_info = find_vfunc_info_in_interface(cls.__bases__, vfunc_name[len("do_"):])
+                vfunc_name_tmp = vfunc_name[len("do_"):]
+                if hasattr(py_vfunc, "_gtype"):
+                    vfunc_info = find_vfunc_info_in_interface(cls.__bases__, vfunc_name_tmp, py_vfunc._gtype)
+                else:
+                    vfunc_info = find_vfunc_info_in_interface(cls.__bases__, vfunc_name_tmp)
 
             if vfunc_info is not None:
                 assert vfunc_name == ('do_' + vfunc_info.get_name())
                 # Check to see if there are vfuncs with the same name in the bases.
                 # We have no way of specifying which one we are supposed to override.
-                ambiguous_base = find_vfunc_conflict_in_bases(vfunc_info, cls.__bases__)
-                if ambiguous_base is not None:
-                    base_info = vfunc_info.get_container()
-                    raise TypeError('Method %s() on class %s.%s is ambiguous '
-                                    'with methods in base classes %s.%s and %s.%s' %
-                                    (vfunc_name,
-                                     cls.__info__.get_namespace(),
-                                     cls.__info__.get_name(),
-                                     base_info.get_namespace(),
-                                     base_info.get_name(),
-                                     ambiguous_base.__info__.get_namespace(),
-                                     ambiguous_base.__info__.get_name()
-                                    ))
-                hook_up_vfunc_implementation(vfunc_info, cls.__gtype__,
-                                             py_vfunc)
+                if hasattr(py_vfunc, "_gtype"):
+                    gtype = py_vfunc._gtype
+                else:
+                    gtype = cls.__gtype__
+                    ambiguous_base = find_vfunc_conflict_in_bases(vfunc_info, cls.__bases__)
+                    if ambiguous_base is not None:
+                        base_info = vfunc_info.get_container()
+                        raise TypeError('Method %s() on class %s.%s is ambiguous '
+                                        'with methods in base classes %s.%s and %s.%s' %
+                                        (vfunc_name,
+                                         cls.__info__.get_namespace(),
+                                         cls.__info__.get_name(),
+                                         base_info.get_namespace(),
+                                         base_info.get_name(),
+                                         ambiguous_base.__info__.get_namespace(),
+                                         ambiguous_base.__info__.get_name()
+                                        ))
+                hook_up_vfunc_implementation(vfunc_info, cls.__gtype__, py_vfunc)
+
 
     def _setup_native_vfuncs(cls):
         # Only InterfaceInfo and ObjectInfo have the get_vfuncs() method.
@@ -140,27 +142,53 @@ class MetaClassHelper(object):
             name = 'do_%s' % vfunc_info.__name__
             setattr(cls, name, vfunc_info)
 
+def find_vfunc_info_in_bases(cls, vfunc_name, gtype=None):
+    # If a method name starts with "do_" assume it is a vfunc, and search
+    # in the base classes for a method with the same name to override.
+    # Recursion is necessary as overriden methods in most immediate parent
+    # classes may shadow vfuncs from classes higher in the hierarchy.
+    #
+    # If gtype is set, get the vfunc_info of the specified type
+    vfunc_info = None
+    if gtype is None:
+        base_classes = cls.__mro__
+    else:
+        if gtype in cls.__mro__:
+            base_classes = [gtype]
+        else:
+            base_classes = []
 
-def find_vfunc_info_in_interface(bases, vfunc_name):
+    for base in base_classes:
+        method = getattr(base, vfunc_name, None)
+        if method is not None and isinstance(method, VFuncInfo):
+            vfunc_info = method
+            break
+    return vfunc_info
+
+def find_vfunc_info_in_interface(bases, vfunc_name, gtype=None):
     for base in bases:
         # All wrapped interfaces inherit from GInterface.
         # This can be seen in IntrospectionModule.__getattr__() in module.py.
         # We do not need to search regular classes here, only wrapped interfaces.
         # We also skip GInterface, because it is not wrapped and has no __info__ attr.
         # Skip bases without __info__ (static _gobject._gobject.GObject)
+        #
+        # If gtype is set, get the vfunc_info of the specified type
         if base is GInterface or\
                 not issubclass(base, GInterface) or\
                 not hasattr(base, '__info__'):
             continue
 
+        check_type = bool(gtype) and gtype == base
+
         # Only look at this classes vfuncs if it is an interface.
-        if isinstance(base.__info__, InterfaceInfo):
+        if isinstance(base.__info__, InterfaceInfo) and check_type:
             for vfunc in base.__info__.get_vfuncs():
                 if vfunc.get_name() == vfunc_name:
                     return vfunc
 
         # Recurse into the parent classes
-        vfunc = find_vfunc_info_in_interface(base.__bases__, vfunc_name)
+        vfunc = find_vfunc_info_in_interface(base.__bases__, vfunc_name, gtype)
         if vfunc is not None:
             return vfunc
 
